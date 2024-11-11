@@ -11,6 +11,7 @@ import (
 )
 
 var cb *gobreaker.CircuitBreaker
+var breakerState string
 
 func initCircuitBreaker() {
 	settings := gobreaker.Settings{
@@ -21,26 +22,43 @@ func initCircuitBreaker() {
 		ReadyToTrip: func(counts gobreaker.Counts) bool {
 			return counts.ConsecutiveFailures > 3
 		},
+		OnStateChange: func(name string, from, to gobreaker.State) {
+			switch to {
+			case gobreaker.StateOpen:
+				breakerState = "open"
+			case gobreaker.StateHalfOpen:
+				breakerState = "half-open"
+			case gobreaker.StateClosed:
+				breakerState = "closed"
+			}
+		},
 	}
 	cb = gobreaker.NewCircuitBreaker(settings)
 }
 
 func fetchProblem(problemID int) (map[string]interface{}, error) {
 	cacheKey := fmt.Sprintf("problem:%d", problemID)
-	val, err := rdb.Get(ctx, cacheKey).Result()
-	if err == nil && val != "" {
-		var cachedProblem map[string]interface{}
-		json.Unmarshal([]byte(val), &cachedProblem)
-		return cachedProblem, nil
+
+	if breakerState == "open" {
+		val, err := rdb.Get(ctx, cacheKey).Result()
+		if err == nil && val != "" {
+			var cachedProblem map[string]interface{}
+			json.Unmarshal([]byte(val), &cachedProblem)
+			return cachedProblem, nil
+		}
 	}
 
 	problemData, err := cb.Execute(func() (interface{}, error) {
-		url := fmt.Sprintf("http://problem_management_service/problems/%d", problemID)
+		url := fmt.Sprintf("http://problem_management:8080/problems/%d", problemID)
 		resp, err := http.Get(url)
 		if err != nil {
 			return nil, err
 		}
 		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("failed to fetch problem: %s", resp.Status)
+		}
 
 		body, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
@@ -56,8 +74,13 @@ func fetchProblem(problemID int) (map[string]interface{}, error) {
 
 		return problem, nil
 	})
+
 	if err != nil {
-		return nil, err
+		if breakerState == "closed" {
+			return nil, err
+		}
+
+		return nil, fmt.Errorf("service unavailable and no cached data found")
 	}
 
 	return problemData.(map[string]interface{}), nil

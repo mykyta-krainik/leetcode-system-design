@@ -71,7 +71,10 @@ func getCompetition(c *gin.Context) {
 
 	var competition Competition
 	query := `SELECT id, name, description, problem_ids, created_at, updated_at FROM competitions WHERE id = $1`
-	err = dbPool.QueryRow(ctx, query, id).Scan(&competition.ID, &competition.Name, &competition.Description, &competition.ProblemIDs, &competition.CreatedAt, &competition.UpdatedAt)
+	err = dbPool.QueryRow(ctx, query, id).Scan(
+		&competition.ID, &competition.Name, &competition.Description,
+		pq.Array(&competition.ProblemIDs), &competition.CreatedAt, &competition.UpdatedAt,
+	)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Competition not found"})
 		return
