@@ -36,41 +36,6 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
 
-  elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:7.10.0
-    environment:
-      - discovery.type=single-node
-      - xpack.security.enabled=false
-    networks:
-      - leetcode_network
-    volumes:
-      - elasticsearch_data:/usr/share/elasticsearch/data
-    deploy:
-      restart_policy:
-        condition: on-failure
-
-  logstash:
-    image: docker.elastic.co/logstash/logstash:7.10.0
-    networks:
-      - leetcode_network
-    volumes:
-      - ./logstash.conf:/usr/share/logstash/pipeline/logstash.conf
-    deploy:
-      restart_policy:
-        condition: on-failure
-
-  kibana:
-    image: docker.elastic.co/kibana/kibana:7.10.0
-    environment:
-      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
-    networks:
-      - leetcode_network
-    ports:
-      - "5601:5601"
-    deploy:
-      restart_policy:
-        condition: on-failure
-
   prometheus:
     image: prom/prometheus
     volumes:
@@ -112,10 +77,6 @@ services:
         - "traefik.enable=true"
         - "traefik.http.routers.problem_management.rule=PathPrefix(`/problems`)"
         - "traefik.http.services.problem_management.loadbalancer.server.port=8080"
-    logging:
-      driver: json-file
-#      options:
-#        gelf-address: "udp://logstash:5000"
 
   competition:
     image: avalon5/competition:latest
@@ -133,10 +94,6 @@ services:
         - "traefik.enable=true"
         - "traefik.http.routers.competition.rule=PathPrefix(`/competitions`)"
         - "traefik.http.services.competition.loadbalancer.server.port=8080"
-    logging:
-      driver: json-file
-#      options:
-#        gelf-address: "udp://logstash:5000"
 
   competition_redis:
     image: redis:latest
@@ -179,5 +136,4 @@ services:
 volumes:
   problem_db_data:
   competition_db_data:
-  elasticsearch_data:
   grafana_data:
