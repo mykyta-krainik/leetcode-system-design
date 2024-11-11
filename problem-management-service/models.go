@@ -1,9 +1,9 @@
-package models
+package main
 
 import "time"
 
 type Problem struct {
-	ID          string    `json:"id"`
+	ID          int       `json:"id"`
 	Title       string    `json:"title"`
 	Description string    `json:"description"`
 	Difficulty  string    `json:"difficulty"`

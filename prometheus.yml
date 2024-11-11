@@ -1,0 +1,16 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'traefik'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['traefik:8080']
+
+  - job_name: 'problem_management'
+    static_configs:
+      - targets: ['problem_management:8080']
+
+  - job_name: 'competition'
+    static_configs:
+      - targets: ['competition:8080']

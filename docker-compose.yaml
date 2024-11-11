@@ -1,8 +1,183 @@
+version: "3.8"
+
+networks:
+  leetcode_network:
+    driver: overlay
+    attachable: true
+    external: true
+
+  problem_network:
+    driver: overlay
+    attachable: true
+
+  competition_network:
+    driver: overlay
+    attachable: true
+
 services:
-  problem-service:
-    container_name: problem-service
-    build:
-      context: .
-      dockerfile: Dockerfile
+  traefik:
+    image: traefik:v2.9
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.swarmMode=true"
+      - "--providers.docker.network=leetcode_network"
+      - "--providers.docker.exposedByDefault=false"
+      - "--entrypoints.web.address=:80"
     ports:
+      - "80:80"
       - "8080:8080"
+    networks:
+      - leetcode_network
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.10.0
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+    networks:
+      - leetcode_network
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    deploy:
+      restart_policy:
+        condition: on-failure
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:7.10.0
+    networks:
+      - leetcode_network
+    volumes:
+      - ./logstash.conf:/usr/share/logstash/pipeline/logstash.conf
+    deploy:
+      restart_policy:
+        condition: on-failure
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:7.10.0
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    networks:
+      - leetcode_network
+    ports:
+      - "5601:5601"
+    deploy:
+      restart_policy:
+        condition: on-failure
+
+  prometheus:
+    image: prom/prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - leetcode_network
+    ports:
+      - "9090:9090"
+    deploy:
+      restart_policy:
+        condition: on-failure
+
+  grafana:
+    image: grafana/grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    networks:
+      - leetcode_network
+    ports:
+      - "3000:3000"
+    deploy:
+      restart_policy:
+        condition: on-failure
+    volumes:
+      - grafana_data:/var/lib/grafana
+
+  problem_management:
+    image: avalon5/problem_management:latest
+    networks:
+      - leetcode_network
+      - problem_network
+    environment:
+      - DATABASE_URL=postgres://user:password@problem_db:5432/problem_db
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.problem_management.rule=PathPrefix(`/problems`)"
+        - "traefik.http.services.problem_management.loadbalancer.server.port=8080"
+    logging:
+      driver: json-file
+#      options:
+#        gelf-address: "udp://logstash:5000"
+
+  competition:
+    image: avalon5/competition:latest
+    networks:
+      - leetcode_network
+      - competition_network
+    environment:
+      - DATABASE_URL=postgres://user:password@competition_db:5432/competition_db
+      - REDIS_URL=competition_redis:6379
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.competition.rule=PathPrefix(`/competitions`)"
+        - "traefik.http.services.competition.loadbalancer.server.port=8080"
+    logging:
+      driver: json-file
+#      options:
+#        gelf-address: "udp://logstash:5000"
+
+  competition_redis:
+    image: redis:latest
+    networks:
+      - competition_network
+    deploy:
+      restart_policy:
+        condition: on-failure
+
+  problem_db:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: problem_db
+    networks:
+      - problem_network
+    volumes:
+      - problem_db_data:/var/lib/postgresql/data
+      - ./problem-management-service/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    deploy:
+      restart_policy:
+        condition: on-failure
+
+  competition_db:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: competition_db
+    networks:
+      - competition_network
+    volumes:
+      - competition_db_data:/var/lib/postgresql/data
+      - ./competition-service/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    deploy:
+      restart_policy:
+        condition: on-failure
+
+volumes:
+  problem_db_data:
+  competition_db_data:
+  elasticsearch_data:
+  grafana_data:
