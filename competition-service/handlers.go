@@ -1,10 +1,11 @@
-// handlers.go
 package main
 
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/google/uuid"
 	"github.com/lib/pq"
+	"log"
 	"net/http"
 	"time"
 
@@ -12,26 +13,54 @@ import (
 )
 
 func createCompetition(c *gin.Context) {
-	var competition Competition
+	var competition struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		ProblemIDs  []int  `json:"problem_ids"`
+		ID          int    `json:"id"`
+	}
 	if err := c.ShouldBindJSON(&competition); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
+
+	tx, err := dbPool.Begin(ctx)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to begin transaction"})
+		return
+	}
+	defer tx.Rollback(ctx)
 
 	query := `INSERT INTO competitions (name, description, problem_ids, created_at, updated_at) VALUES ($1, $2, $3, NOW(), NOW()) RETURNING id`
-	err := dbPool.QueryRow(
-		ctx,
-		query,
-		competition.Name,
-		competition.Description,
-		pq.Array(competition.ProblemIDs),
-	).Scan(&competition.ID)
+	err = tx.QueryRow(ctx, query, competition.Name, competition.Description, pq.Array(competition.ProblemIDs)).Scan(&competition.ID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create competition"})
+		c.JSON(500, gin.H{"error": "Failed to create competition"})
 		return
 	}
 
-	c.JSON(http.StatusCreated, competition)
+	eventPayload := map[string]interface{}{
+		"id":          competition.ID,
+		"name":        competition.Name,
+		"description": competition.Description,
+		"problem_ids": competition.ProblemIDs,
+	}
+	payload, _ := json.Marshal(eventPayload)
+	eventID := uuid.New().String()
+
+	_, err = tx.Exec(ctx, `INSERT INTO outbox (event_id, event_type, payload) VALUES ($1, $2, $3)`, eventID, "competition_created", payload)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to write to outbox"})
+		return
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		c.JSON(500, gin.H{"error": "Failed to commit transaction"})
+		return
+	}
+
+	go monitorTimeout(eventID, competition.ID)
+
+	c.JSON(201, gin.H{"competition_id": competition.ID})
 }
 
 func getCompetitionProblems(c *gin.Context) {

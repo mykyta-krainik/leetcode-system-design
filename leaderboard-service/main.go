@@ -2,25 +2,31 @@ package main
 
 import (
 	"context"
-	"github.com/gin-gonic/gin"
-	"github.com/go-redis/redis/v8"
-	"github.com/jackc/pgx/v4/pgxpool"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/streadway/amqp"
 	"log"
 	"os"
-	"sync"
+
+	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v4/pgxpool"
+	"github.com/streadway/amqp"
 )
 
 var (
 	dbPool          *pgxpool.Pool
-	rdb             *redis.Client
 	ctx             = context.Background()
 	rabbitMQConn    *amqp.Connection
 	rabbitMQChannel *amqp.Channel
-	timeoutRegistry = make(map[string]chan bool)
-	mutex           = &sync.Mutex{}
 )
+
+const maxRetries = 5
+
+func initDB() {
+	dbURL := os.Getenv("DATABASE_URL")
+	var err error
+	dbPool, err = pgxpool.Connect(ctx, dbURL)
+	if err != nil {
+		log.Fatalf("Unable to connect to database: %v\n", err)
+	}
+}
 
 func initRabbitMQ() {
 	rabbitMQURL := os.Getenv("RABBITMQ_URL")
@@ -39,7 +45,7 @@ func initRabbitMQ() {
 		"competition_created", true, false, false, false, nil,
 	)
 	if err != nil {
-		log.Fatalf("Failed to declare RabbitMQ queue: %v\n", err)
+		log.Fatalf("Failed to declare competition_events queue: %v\n", err)
 	}
 
 	err = rabbitMQChannel.ExchangeDeclare(
@@ -55,7 +61,7 @@ func initRabbitMQ() {
 		log.Fatalf("Failed to declare rollback exchange: %v\n", err)
 	}
 
-	createAndBindQueue("rollback_events", "rollback_exchange")
+	createAndBindQueue("leaderboard_rollback_queue", "rollback_exchange")
 
 	_, err = rabbitMQChannel.QueueDeclare(
 		"leaderboard_success", true, false, false, false, nil,
@@ -63,7 +69,6 @@ func initRabbitMQ() {
 	if err != nil {
 		log.Fatalf("Failed to declare leaderboard_success queue: %v\n", err)
 	}
-
 }
 
 func createAndBindQueue(queueName string, exchangeName string) {
@@ -91,60 +96,29 @@ func createAndBindQueue(queueName string, exchangeName string) {
 	}
 }
 
-func initDB() {
-	dbURL := os.Getenv("DATABASE_URL")
-	var err error
-	dbPool, err = pgxpool.Connect(context.Background(), dbURL)
-	if err != nil {
-		log.Fatalf("Unable to connect to database: %v\n", err)
-	}
-}
-
-func initRedis() {
-	redisAddr := os.Getenv("REDIS_URL")
-	if redisAddr == "" {
-		redisAddr = "competition_redis:6379"
-	}
-
-	rdb = redis.NewClient(&redis.Options{
-		Addr: redisAddr,
-	})
-
-	if err := rdb.Ping(ctx).Err(); err != nil {
-		log.Fatalf("Unable to connect to Redis: %v\n", err)
-	}
-}
-
 func startMessageConsumers() {
-	go consumeMessages("leaderboard_success")
-	go consumeMessages("rollback_events")
+	go consumeMessages("competition_created")
+	go consumeMessages("leaderboard_rollback_queue")
 }
 
 func main() {
 	initDB()
-	initRedis()
 	initRabbitMQ()
+
 	defer dbPool.Close()
-	defer rdb.Close()
 	defer rabbitMQConn.Close()
 	defer rabbitMQChannel.Close()
 
 	startMessageConsumers()
 
-	go processOutbox()
 	go processInboxMessages()
+	go processOutbox()
 
 	r := gin.Default()
+	r.GET("/leaderboards/:id", getLeaderboard)
+	r.GET("/leaderboards", getLeaderboards)
 
-	println("Running on port 8080")
-
-	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
-
-	r.POST("/competitions", createCompetition)
-	r.GET("/competitions/:id", getCompetition)
-	r.GET("/competitions/:id/problems", getCompetitionProblems)
-	r.GET("/competitions", getCompetitions)
-
+	log.Println("Leaderboard Service running on port 8081")
 	if err := r.Run(":8080"); err != nil {
 		log.Fatalf("Failed to run server: %v\n", err)
 	}

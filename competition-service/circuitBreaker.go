@@ -54,6 +54,7 @@ func fetchProblem(problemID int) (map[string]interface{}, error) {
 		if err != nil {
 			return nil, err
 		}
+
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
