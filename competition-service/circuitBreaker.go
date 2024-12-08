@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"time"
 
@@ -36,8 +37,10 @@ func initCircuitBreaker() {
 	cb = gobreaker.NewCircuitBreaker(settings)
 }
 
-func fetchProblem(problemID int) (map[string]interface{}, error) {
+func fetchProblem(problemID int, serviceName string) (map[string]interface{}, error) {
 	cacheKey := fmt.Sprintf("problem:%d", problemID)
+
+	log.Printf("breakerState %s", breakerState)
 
 	if breakerState == "open" {
 		val, err := rdb.Get(ctx, cacheKey).Result()
@@ -48,9 +51,36 @@ func fetchProblem(problemID int) (map[string]interface{}, error) {
 		}
 	}
 
+	log.Printf("rateLimiter problem ID %d", problemID)
+
+	canSend, err := rateLimiter(serviceName, false)
+
+	log.Printf("rateLimiter problem ID %d after", problemID)
+
+	if err != nil {
+		log.Printf("Error checking rate limit: %v", err)
+		return nil, fmt.Errorf("internal server error")
+	}
+
+	if !canSend {
+		request := fmt.Sprintf("problem_id:%d", problemID)
+
+		if err := enqueueRequest(serviceName, request); err != nil {
+			log.Printf("Error enqueuing request: %v", err)
+			return nil, fmt.Errorf("rate limit exceeded and failed to queue request")
+		}
+
+		return nil, fmt.Errorf("rate limit exceeded, request queued")
+	}
+
 	problemData, err := cb.Execute(func() (interface{}, error) {
 		url := fmt.Sprintf("http://problem_management:8080/problems/%d", problemID)
-		resp, err := http.Get(url)
+		req, err := http.NewRequest("GET", url, nil)
+
+		req.Header.Set("X-Client-ID", "123")
+
+		resp, err := http.DefaultClient.Do(req)
+
 		if err != nil {
 			return nil, err
 		}

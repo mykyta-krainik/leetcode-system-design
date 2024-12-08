@@ -55,7 +55,6 @@ func processOutbox() {
 			)
 			if err != nil {
 				log.Printf("Failed to publish message (attempt %d/%d): %v\n", retries+1, maxRetries, err)
-				// Increment the retry count
 				_, updateErr := dbPool.Exec(ctx, "UPDATE outbox SET retries = retries + 1 WHERE id = $1", id)
 				if updateErr != nil {
 					log.Printf("Failed to update retries for event ID %s: %v\n", eventID, updateErr)

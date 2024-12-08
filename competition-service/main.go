@@ -63,7 +63,6 @@ func initRabbitMQ() {
 	if err != nil {
 		log.Fatalf("Failed to declare leaderboard_success queue: %v\n", err)
 	}
-
 }
 
 func createAndBindQueue(queueName string, exchangeName string) {
@@ -124,6 +123,7 @@ func main() {
 	initDB()
 	initRedis()
 	initRabbitMQ()
+	initCircuitBreaker()
 	defer dbPool.Close()
 	defer rdb.Close()
 	defer rabbitMQConn.Close()
@@ -137,6 +137,8 @@ func main() {
 	r := gin.Default()
 
 	println("Running on port 8080")
+
+	go processQueuedRequests("problem_management", sendRequest)
 
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 

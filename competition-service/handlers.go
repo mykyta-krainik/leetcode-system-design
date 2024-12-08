@@ -75,11 +75,26 @@ func getCompetitionProblems(c *gin.Context) {
 	}
 
 	var problems []map[string]interface{}
+	serviceName := "problem_management"
+
 	for _, problemID := range problemIDs {
-		problem, err := fetchProblem(problemID)
-		if err == nil {
-			problems = append(problems, problem)
+		problem, err := fetchProblem(problemID, serviceName)
+
+		if err != nil {
+			if err.Error() == "rate limit exceeded, request queued" {
+				problem = map[string]interface{}{
+					"error": fmt.Sprintf("Problem ID %d request queued due to rate limiting", problemID),
+				}
+
+				log.Printf("Problem ID %d request queued due to rate limiting", problemID)
+				continue
+			}
+
+			log.Printf("Error fetching problem ID %d: %v", problemID, err)
+
+			continue
 		}
+		problems = append(problems, problem)
 	}
 
 	c.JSON(http.StatusOK, problems)

@@ -16,7 +16,7 @@ func monitorTimeout(eventID string, competitionID int) {
 	mutex.Unlock()
 
 	select {
-	case <-time.After(5 * time.Second):
+	case <-time.After(10 * time.Second):
 		log.Printf("Timeout expired for competition ID %d. Initiating rollback.\n", competitionID)
 		initiateRollback(eventID, competitionID)
 	case <-cancelChan:
