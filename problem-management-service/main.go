@@ -3,14 +3,15 @@ package main
 import (
 	"context"
 	"github.com/gin-gonic/gin"
+	"github.com/go-redis/redis/v8"
 	"github.com/jackc/pgx/v4/pgxpool"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"log"
 	"os"
 )
 
 var (
 	dbPool *pgxpool.Pool
+	rdb    *redis.Client
 	ctx    = context.Background()
 )
 
@@ -23,13 +24,33 @@ func initDB() {
 	}
 }
 
+func initRedis() {
+	redisAddr := os.Getenv("REDIS_URL")
+	if redisAddr == "" {
+		redisAddr = "problem_management_redis:6379"
+	}
+
+	rdb = redis.NewClient(&redis.Options{
+		Addr: redisAddr,
+	})
+
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		log.Fatalf("Unable to connect to Redis: %v\n", err)
+	}
+}
+
 func main() {
 	initDB()
+	initRedis()
 
 	defer dbPool.Close()
+	defer rdb.Close()
 
 	r := gin.Default()
-	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
+
+	r.Use(rateLimiterMiddleware())
+
+	//r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	r.POST("/problems", createProblem)
 	r.GET("/problems/:id", getProblem)

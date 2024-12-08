@@ -87,6 +87,7 @@ services:
       - problem_network
     environment:
       - DATABASE_URL=postgres://user:password@problem_db:5432/problem_db
+      - REDIS_URL=problem_management_redis:6379
     deploy:
       replicas: 1
       restart_policy:
@@ -136,6 +137,14 @@ services:
         - "traefik.http.services.leaderboard.loadbalancer.server.port=8080"
     logging:
       driver: "json-file"
+
+  problem_management_redis:
+    image: redis:latest
+    networks:
+      - problem_network
+    deploy:
+      restart_policy:
+        condition: on-failure
 
   competition_redis:
     image: redis:latest
